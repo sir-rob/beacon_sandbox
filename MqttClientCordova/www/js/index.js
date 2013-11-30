@@ -15,7 +15,9 @@ var app = {
     // The scope of 'this' is the event. In order to call the 'receivedEvent'
     // function, we must explicity call 'app.receivedEvent(...);'
     onDeviceReady: function() {
-        app.receivedEvent('deviceready');
+    	
+    	console.log(device.uuid);
+
     },
     // Update DOM on a Received Event
     receivedEvent: function(id) {
@@ -23,3 +25,15 @@ var app = {
     }
 };
 app.initialize();
+
+$(document).ready(function() {
+	console.log('>> try to attach a function to the submit button that takes the text and sends to server');
+	
+	$("#send").click(function () {
+		var message = $("#message").val();
+		
+		var client = new Messaging.Client("localhost", 1883, "vishal");
+		client.connect();
+		
+	});
+});
