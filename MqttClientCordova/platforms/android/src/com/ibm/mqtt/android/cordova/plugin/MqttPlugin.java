@@ -300,9 +300,9 @@ public class MqttPlugin extends CordovaPlugin {
 	// Part of the Cordova plugin interface
 	public void setContext(CordovaInterface ctx) {
 		
-		super.cordova = ctx;
+		this.cordova = ctx;
 		// super.setContext(ctx);
-
+		
 		context = (Context) ctx;
 		// We could move to LocalBroadcastManager
 		// when we can guarantee v4 and upwards.
