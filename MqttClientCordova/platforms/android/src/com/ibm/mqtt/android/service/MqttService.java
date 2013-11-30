@@ -288,11 +288,11 @@ public class MqttService extends Service implements MqttTraceHandler {
 	 * @param clientHandle
 	 * @param messageId
 	 */
-	public PluginResult acknowledgeMessageArrival(String clientHandle, String id) {
+	public boolean acknowledgeMessageArrival(String clientHandle, String id) {
 		if (messageStore.discardArrived(clientHandle,id)) {
-			return new PluginResult(Status.OK);
+			return true;
 		} else {
-			return new PluginResult(Status.ERROR);
+			return false;
 		}
 	}
 

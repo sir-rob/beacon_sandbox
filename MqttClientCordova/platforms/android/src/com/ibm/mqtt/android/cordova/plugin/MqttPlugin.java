@@ -18,10 +18,11 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
 
-import org.apache.cordova.api.CordovaInterface;
-import org.apache.cordova.api.Plugin;
-import org.apache.cordova.api.PluginResult;
-import org.apache.cordova.api.PluginResult.Status;
+import org.apache.cordova.CallbackContext;
+import org.apache.cordova.CordovaInterface;
+import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PluginResult;
+import org.apache.cordova.PluginResult.Status;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -44,7 +45,7 @@ import com.ibm.mqtt.android.service.MqttServiceConstants;
  * Cordova plugin to support mqtt usage on Android
  * 
  */
-public class MqttPlugin extends Plugin {
+public class MqttPlugin extends CordovaPlugin {
 
 	// Identifier for use in log messages, etc.
 	private static final String TAG = "MqttPlugin";
@@ -76,20 +77,17 @@ public class MqttPlugin extends Plugin {
 	 */
 	private BroadcastReceiver callbackListener = new BroadcastReceiver() {
 		private static final String TAG = "callbackListener";
+		private CallbackContext callbackContext = new CallbackContext(traceCallbackId, webView);
 
 		public void onReceive(Context context, Intent intent) {
 			JSONObject callbackResult = new JSONObject();
-			String action = intent
-					.getStringExtra(MqttServiceConstants.CALLBACK_ACTION);
-			Status status = (Status) intent
-					.getSerializableExtra(MqttServiceConstants.CALLBACK_STATUS);
+			String action = intent.getStringExtra(MqttServiceConstants.CALLBACK_ACTION);
+			Status status = (Status) intent.getSerializableExtra(MqttServiceConstants.CALLBACK_STATUS);
 			if (!action.equals(MqttServiceConstants.TRACE_ACTION)) {
 				// Don't trace calls which are themselves trace...
-				traceDebug(TAG, "onReceive action {" + action + "}, status {"
-						+ status + "}");
+				traceDebug(TAG, "onReceive action {" + action + "}, status {" + status + "}", new CallbackContext(this.callbackContext.getCallbackId(), webView));
 			}
-			String invocationContextString = intent
-					.getStringExtra(MqttServiceConstants.CALLBACK_INVOCATION_CONTEXT);
+			String invocationContextString = intent.getStringExtra(MqttServiceConstants.CALLBACK_INVOCATION_CONTEXT);
 
 			JSONObject invocationContext = null;
 			if (invocationContextString != null) {
@@ -101,78 +99,64 @@ public class MqttPlugin extends Plugin {
 			}
 
 			if (action.equals(MqttServiceConstants.TRACE_ACTION)) {
-				String message = intent
-						.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
-				int errorNumber = intent.getIntExtra(
-						MqttServiceConstants.CALLBACK_ERROR_NUMBER,
-						MqttServiceConstants.DEFAULT_ERROR_NUMBER);
-				String severity = intent
-						.getStringExtra(MqttServiceConstants.CALLBACK_TRACE_SEVERITY);
-				makeTraceCallback(status, message, errorNumber, severity);
+				String message = intent.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
+				int errorNumber = intent.getIntExtra(MqttServiceConstants.CALLBACK_ERROR_NUMBER, MqttServiceConstants.DEFAULT_ERROR_NUMBER);
+				String severity = intent.getStringExtra(MqttServiceConstants.CALLBACK_TRACE_SEVERITY);
+				makeTraceCallback(status, message, errorNumber, severity, this.callbackContext);
 				return;
 			}
 
 			// All callbacks other than trace will have an associated client
 			// handle
 
-			String clientHandle = intent
-					.getStringExtra(MqttServiceConstants.CALLBACK_CLIENT_HANDLE);
+			String clientHandle = intent.getStringExtra(MqttServiceConstants.CALLBACK_CLIENT_HANDLE);
 
 			// The callback id will either be explicitly passed in the intent
-			String callbackId = intent
-					.getStringExtra(MqttServiceConstants.CALLBACK_ACTIVITY_TOKEN);
+			String callbackId = intent.getStringExtra(MqttServiceConstants.CALLBACK_ACTIVITY_TOKEN);
 			// or, for "unsolicited" actions, held in the lookup table
 			if (callbackId == null) {
 				callbackId = getCallback(clientHandle, action);
 			}
 
 			if (callbackId == null) {
-				traceError(TAG,
-						"onReceive - can't find callback for clientHandle{"
-								+ clientHandle + "} action {" + action + "}");
+				traceError(TAG, "onReceive - can't find callback for clientHandle{" + clientHandle + "} action {" + action + "}", this.callbackContext);
 				return;
 			}
 
-			traceDebug(TAG, "onReceive - callback for clientHandle{"
-					+ clientHandle + "} action {" + action + "} is {"
-					+ callbackId + "}");
+			traceDebug(TAG, "onReceive - callback for clientHandle{" + clientHandle + "} action {" + action + "} is {" + callbackId + "}", this.callbackContext);
 
 			if ((action.equals(MqttServiceConstants.SEND_ACTION))
 					|| (action.equals(MqttServiceConstants.GET_CLIENT_ACTION))
-					|| (action
-							.equals(MqttServiceConstants.START_SERVICE_ACTION))
+					|| (action.equals(MqttServiceConstants.START_SERVICE_ACTION))
 					|| (action.equals(MqttServiceConstants.STOP_SERVICE_ACTION))
 					|| (action.equals(MqttServiceConstants.CONNECT_ACTION))
-					|| (action
-							.equals(MqttServiceConstants.ACKNOWLEDGE_RECEIPT_ACTION))
+					|| (action.equals(MqttServiceConstants.ACKNOWLEDGE_RECEIPT_ACTION))
 					|| (action.equals(MqttServiceConstants.UNSUBSCRIBE_ACTION))
 					|| (action.equals(MqttServiceConstants.SUBSCRIBE_ACTION))) {
 				// These actions all are passed back in the same way
 				try {
 					callbackResult.put("invocationContext", invocationContext);
 				} catch (JSONException e) {
-					traceException(TAG, "failed to build callback result", e);
+					traceException(TAG, "failed to build callback result", e, this.callbackContext);
 				}
 				if (status.equals(Status.ERROR)) {
-					String message = intent
-							.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
+					String message = intent.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
 					int errorNumber = intent.getIntExtra(
-							MqttServiceConstants.CALLBACK_ERROR_NUMBER,
-							MqttServiceConstants.DEFAULT_ERROR_NUMBER);
+						MqttServiceConstants.CALLBACK_ERROR_NUMBER,
+						MqttServiceConstants.DEFAULT_ERROR_NUMBER);
 					try {
 						callbackResult.put("errorMessage", message);
 						callbackResult.put("errorCode", errorNumber);
 					} catch (JSONException e) {
-						traceException(TAG, "failed to build callback result",
-								e);
+						traceException(TAG, "failed to build callback result", e, this.callbackContext);
 					}
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					error(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.sendPluginResult(pluginResult);
+					this.callbackContext.error(callbackId);
 				} else {
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					q(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.sendPluginResult(pluginResult);
+					this.callbackContext.success(callbackId);
 				}
 
 			} else if (action.equals(MqttServiceConstants.SUBSCRIBE_ACTION)) {
@@ -182,7 +166,7 @@ public class MqttPlugin extends Plugin {
 				try {
 					callbackResult.put("invocationContext", invocationContext);
 				} catch (JSONException e) {
-					traceException(TAG, "failed to build callback result", e);
+					traceException(TAG, "failed to build callback result", e, this.callbackContext);
 				}
 				if (status.equals(Status.ERROR)) {
 					String message = intent
@@ -194,37 +178,34 @@ public class MqttPlugin extends Plugin {
 						callbackResult.put("errorMessage", message);
 						callbackResult.put("errorCode", errorNumber);
 					} catch (JSONException e) {
-						traceException(TAG, "failed to build callback result",
-								e);
+						traceException(TAG, "failed to build callback result", e, this.callbackContext);
 					}
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					error(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.sendPluginResult(pluginResult);
+					this.callbackContext.error(callbackId);
 				} else {
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					success(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.sendPluginResult(pluginResult);
+					this.callbackContext.success(callbackId);
 				}
 			} else if (action.equals(MqttServiceConstants.DISCONNECT_ACTION)) {
 				try {
 					callbackResult.put("invocationContext", invocationContext);
 				} catch (JSONException e) {
-					traceException(TAG, "failed to build callback result", e);
+					traceException(TAG, "failed to build callback result", e, this.callbackContext);
 				}
 				if (status.equals(Status.OK)) {
 					// disconnect needs two callbacks - the success callback for
 					// disconnect
 					// and the "unsolicited" onConnectionLost callback
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					success(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.success(callbackId);
 
-					String onConnectionLostCallbackId = getCallback(
-							clientHandle,
+					String onConnectionLostCallbackId = getCallback(clientHandle,
 							MqttServiceConstants.ON_CONNECTION_LOST_ACTION);
 					if (onConnectionLostCallbackId != null) {
 						pluginResult.setKeepCallback(false);
-						success(pluginResult, onConnectionLostCallbackId);
+						this.callbackContext.success(onConnectionLostCallbackId);
 					}
 
 					// get cordova to discard the "unsolicited" callback
@@ -232,10 +213,10 @@ public class MqttPlugin extends Plugin {
 					// for this client by making a "NO_RESULT" callback on each,
 					// without keepCallback set to true...
 					PluginResult result = new PluginResult(Status.NO_RESULT);
-					Map<String, String> callbacks = callbackMap
-							.remove(clientHandle);
+					Map<String, String> callbacks = callbackMap.remove(clientHandle);
 					for (String obsoleteCallbackId : callbacks.values()) {
-						success(result, obsoleteCallbackId);
+						this.callbackContext.sendPluginResult(result);
+						this.callbackContext.success(obsoleteCallbackId);
 					}
 				} else if (status.equals(Status.ERROR)) {
 					String message = intent
@@ -247,21 +228,17 @@ public class MqttPlugin extends Plugin {
 						callbackResult.put("errorMessage", message);
 						callbackResult.put("errorCode", errorNumber);
 					} catch (JSONException e) {
-						traceException(TAG, "failed to build callback result",
-								e);
+						traceException(TAG, "failed to build callback result", e, this.callbackContext);
 					}
-					PluginResult pluginResult = new PluginResult(status,
-							callbackResult);
-					error(pluginResult, callbackId);
+					PluginResult pluginResult = new PluginResult(status, callbackResult);
+					this.callbackContext.sendPluginResult(pluginResult);
+					this.callbackContext.error(callbackId);
 				}
-			} else if ((action
-					.equals(MqttServiceConstants.MESSAGE_ARRIVED_ACTION))
-					|| (action
-							.equals(MqttServiceConstants.MESSAGE_DELIVERED_ACTION))) {
+			} else if ((action.equals(MqttServiceConstants.MESSAGE_ARRIVED_ACTION))
+					|| (action.equals(MqttServiceConstants.MESSAGE_DELIVERED_ACTION))) {
 
 				// We have to build a message object to pass back to the
-				String messageId = intent
-						.getStringExtra(MqttServiceConstants.CALLBACK_MESSAGE_ID);
+				String messageId = intent.getStringExtra(MqttServiceConstants.CALLBACK_MESSAGE_ID);
 
 				// There doesn't seem to be a better way to convert the
 				// payload into a javascript array
@@ -271,17 +248,14 @@ public class MqttPlugin extends Plugin {
 				// - Arrays.asList doesn't play well with primitive arrays
 
 				JSONArray jsPayload = new JSONArray();
-				byte[] payload = intent
-						.getByteArrayExtra(MqttServiceConstants.CALLBACK_PAYLOAD);
+				byte[] payload = intent.getByteArrayExtra(MqttServiceConstants.CALLBACK_PAYLOAD);
 				if (payload != null) {
 					for (int i = 0; i < payload.length; i++) {
 						jsPayload.put(payload[i]);
 					}
 				}
-				String destinationName = intent
-						.getStringExtra(MqttServiceConstants.CALLBACK_DESTINATION_NAME);
-				int qos = intent.getIntExtra(MqttServiceConstants.CALLBACK_QOS,
-						0);
+				String destinationName = intent.getStringExtra(MqttServiceConstants.CALLBACK_DESTINATION_NAME);
+				int qos = intent.getIntExtra(MqttServiceConstants.CALLBACK_QOS, 0);
 				boolean retained = intent.getBooleanExtra(
 						MqttServiceConstants.CALLBACK_RETAINED, false);
 				boolean duplicate = intent.getBooleanExtra(
@@ -293,22 +267,19 @@ public class MqttPlugin extends Plugin {
 
 					// destination isn't available in
 					// onMessageDelivered callbacks
-					jsMsg.put(MqttServiceConstants.DESTINATION_NAME,
-							(destinationName != null) ? destinationName : "");
+					jsMsg.put(MqttServiceConstants.DESTINATION_NAME, (destinationName != null) ? destinationName : "");
 					jsMsg.put(MqttServiceConstants.QOS, qos);
 					jsMsg.put(MqttServiceConstants.RETAINED, retained);
 					jsMsg.put(MqttServiceConstants.DUPLICATE, duplicate);
 				} catch (JSONException e) {
-					traceException(TAG, "failed to build result message", e);
+					traceException(TAG, "failed to build result message", e, this.callbackContext);
 				}
 				PluginResult pluginResult = new PluginResult(status, jsMsg);
 				pluginResult.setKeepCallback(true);
-				success(pluginResult, callbackId);
+				this.callbackContext.success(callbackId);
 
-			} else if (action
-					.equals(MqttServiceConstants.ON_CONNECTION_LOST_ACTION)) {
-				String message = intent
-						.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
+			} else if (action.equals(MqttServiceConstants.ON_CONNECTION_LOST_ACTION)) {
+				String message = intent.getStringExtra(MqttServiceConstants.CALLBACK_ERROR_MESSAGE);
 				int errorNumber = intent.getIntExtra(
 						MqttServiceConstants.CALLBACK_ERROR_NUMBER,
 						MqttServiceConstants.DEFAULT_ERROR_NUMBER);
@@ -316,34 +287,35 @@ public class MqttPlugin extends Plugin {
 					callbackResult.put("errorMessage", message);
 					callbackResult.put("errorCode", errorNumber);
 				} catch (JSONException e) {
-					traceException(TAG, "failed to build callback result", e);
+					traceException(TAG, "failed to build callback result", e, this.callbackContext);
 				}
-				PluginResult pluginResult = new PluginResult(status,
-						callbackResult);
+				PluginResult pluginResult = new PluginResult(status, callbackResult);
 				pluginResult.setKeepCallback(true);
-				success(pluginResult, callbackId);
+				this.callbackContext.success(callbackId);
 			}
 		}
 	};
 
-	@Override
+	
 	// Part of the Cordova plugin interface
 	public void setContext(CordovaInterface ctx) {
-		super.setContext(ctx);
+		
+		super.cordova = ctx;
+		// super.setContext(ctx);
 
-		context = this.ctx.getContext();
+		context = (Context) ctx;
 		// We could move to LocalBroadcastManager
 		// when we can guarantee v4 and upwards.
-		context.registerReceiver(callbackListener, new IntentFilter(
-				MqttServiceConstants.CALLBACK_TO_ACTIVITY));
+		context.registerReceiver(callbackListener, new IntentFilter(MqttServiceConstants.CALLBACK_TO_ACTIVITY));
 	}
 
 	// Listener for when the service is connected or disconnected
 	private ServiceConnection serviceConnection = new ServiceConnection() {
 		private static final String TAG = "MqttServiceConnection";
+		private CallbackContext callbackContext = new CallbackContext(traceCallbackId, webView);
 
 		public void onServiceConnected(ComponentName name, IBinder binder) {
-			traceDebug(TAG, "onServiceConnected - " + name);
+			traceDebug(TAG, "onServiceConnected - " + name, this.callbackContext);
 			mqttService = ((MqttServiceBinder) binder).getService();
 			if (traceCallbackId != null) {
 				mqttService.setTraceCallbackId(traceCallbackId);
@@ -351,7 +323,8 @@ public class MqttPlugin extends Plugin {
 			mqttService.setTraceEnabled(traceEnabled);
 			String callbackId = ((MqttServiceBinder) binder).getActivityToken();
 			PluginResult pluginResult = new PluginResult(Status.OK);
-			success(pluginResult, callbackId);
+			this.callbackContext.sendPluginResult(pluginResult);
+			this.callbackContext.success(callbackId);
 		}
 
 		public void onServiceDisconnected(ComponentName name) {
@@ -376,26 +349,24 @@ public class MqttPlugin extends Plugin {
 	 * 		the callbackId which can be used to invoke to the success/failure callbacks
 	 * 		provide to the cordova.execute call
 	 */
-	public PluginResult execute(String action, JSONArray args, String callbackId) {
-		traceDebug(TAG, "execute(" + action + ",{" + args + "}," + callbackId
-				+ ")");
+	public boolean execute(String action, JSONArray args, CallbackContext callbackContext) {
+		traceDebug(TAG, "execute(" + action + ",{" + args + "}," + callbackContext.getCallbackId() + ")", callbackContext);
 		try {
 			if (action.equals(MqttServiceConstants.START_SERVICE_ACTION)) {
 				if (mqttService != null) {
-					traceDebug(TAG, "execute - service already started");
-					return new PluginResult(Status.OK);
+					traceDebug(TAG, "execute - service already started", callbackContext);
+					return true;
 				}
 				serviceIntent = new Intent(context, MqttService.class);
 				serviceIntent.putExtra(
 						MqttServiceConstants.CALLBACK_ACTIVITY_TOKEN,
-						callbackId);
+						callbackContext.getCallbackId());
 				ComponentName serviceComponentName = context
 						.startService(serviceIntent);
 
 				if (serviceComponentName == null) {
-					traceError(TAG, "execute() - could not start "
-							+ MqttService.class);
-					return new PluginResult(Status.ERROR);
+					traceError(TAG, "execute() - could not start " + MqttService.class, callbackContext);
+					return false;
 				}
 
 				if (context.bindService(serviceIntent, serviceConnection, 0)) {
@@ -404,20 +375,24 @@ public class MqttPlugin extends Plugin {
 					// when it receives a connected event
 					PluginResult result = new PluginResult(Status.NO_RESULT);
 					result.setKeepCallback(true);
-					return result;
+					
+					callbackContext.sendPluginResult(result);
+					return true;
 				}
-				return new PluginResult(Status.ERROR);
+				return false;
 			}
 
 			if (action.equals(MqttServiceConstants.SET_TRACE_CALLBACK)) {
 				// This is a trifle inelegant
-				traceCallbackId = callbackId;
+				traceCallbackId = callbackContext.getCallbackId();
 				if (mqttService != null) {
-					mqttService.setTraceCallbackId(callbackId);
+					mqttService.setTraceCallbackId(callbackContext.getCallbackId());
 				}
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.SET_TRACE_ENABLED)) {
@@ -426,7 +401,9 @@ public class MqttPlugin extends Plugin {
 					mqttService.setTraceEnabled(traceEnabled);
 				}
 				PluginResult result = new PluginResult(Status.OK);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.SET_TRACE_DISABLED)) {
@@ -435,18 +412,20 @@ public class MqttPlugin extends Plugin {
 					mqttService.setTraceEnabled(traceEnabled);
 				}
 				PluginResult result = new PluginResult(Status.OK);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (mqttService == null) {
-				return new PluginResult(Status.ERROR, "Service not started yet");
+				return false;
 			}
 
 			if (action.equals(MqttServiceConstants.STOP_SERVICE_ACTION)) {
 				Intent serviceIntent = new Intent(context, MqttService.class);
 				context.stopService(serviceIntent);
 				mqttService = null;
-				return new PluginResult(Status.OK);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.GET_CLIENT_ACTION)) {
@@ -462,12 +441,12 @@ public class MqttPlugin extends Plugin {
 					callbackMap
 							.put(clientHandle, new HashMap<String, String>());
 				} catch (JSONException e) {
-					traceException(TAG, "execute()", e);
-					return new PluginResult(Status.ERROR, e.getMessage());
+					traceException(TAG, "execute()", e, callbackContext);
+					return false;
 				}
 				// We return a clientHandle to the javascript client,
 				// which it can use to identify the client on subsequent calls
-				return new PluginResult(Status.OK, clientHandle);
+				return true;
 			}
 
 			// All remaining actions have a clientHandle as their first arg
@@ -480,8 +459,7 @@ public class MqttPlugin extends Plugin {
 				String passWord = args.optString(4);
 				int keepAliveInterval = args.getInt(5);
 				JSONObject jsMsg = args.optJSONObject(6);
-				MessagingMessage willMessage = (jsMsg == null) ? null
-						: messageFromJSON(jsMsg);
+				MessagingMessage willMessage = (jsMsg == null) ? null : messageFromJSON(jsMsg, callbackContext);
 				boolean useSSL = args.getBoolean(7);
 				Properties sslProperties = null;
 				JSONObject jsSslProperties = args.getJSONObject(8);
@@ -500,34 +478,40 @@ public class MqttPlugin extends Plugin {
 				String invocationContext = args.optString(9);
 				mqttService.connect(clientHandle, timeout, cleanSession,
 						userName, passWord, keepAliveInterval, willMessage,
-						useSSL, sslProperties, invocationContext, callbackId);
+						useSSL, sslProperties, invocationContext, callbackContext.getCallbackId());
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.DISCONNECT_ACTION)) {
 				String invocationContext = args.optString(1);
 				mqttService.disconnect(clientHandle, invocationContext,
-						callbackId);
+						callbackContext.getCallbackId());
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.SEND_ACTION)) {
 				JSONObject jsMsg = args.getJSONObject(1);
-				MessagingMessage msg = messageFromJSON(jsMsg);
+				MessagingMessage msg = messageFromJSON(jsMsg, callbackContext);
 				String invocationContext = args.optString(2);
 				mqttService.send(clientHandle, msg, invocationContext,
-						callbackId);
+						callbackContext.getCallbackId());
 				// we return Status.NO_RESULT and setKeepCallback(true)
 				// so that the callbackListener can use this callbackId
 				// at an appropriate time - what time that is depends on
 				// the qos value specified.
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.SUBSCRIBE_ACTION)) {
@@ -535,26 +519,30 @@ public class MqttPlugin extends Plugin {
 				int qos = args.getInt(2);
 				String invocationContext = args.optString(3);
 				mqttService.subscribe(clientHandle, topicFilter, qos,
-						invocationContext, callbackId);
+						invocationContext, callbackContext.getCallbackId());
 				// we return Status.NO_RESULT and setKeepCallback(true)
 				// so that the callbackListener can use this callbackId
 				// when it receives an event from the subscribe operation
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.UNSUBSCRIBE_ACTION)) {
 				String topicFilter = args.getString(1);
 				String invocationContext = args.optString(2);
 				mqttService.unsubscribe(clientHandle, topicFilter,
-						invocationContext, callbackId);
+						invocationContext, callbackContext.getCallbackId());
 				// we return Status.NO_RESULT and setKeepCallback(true)
 				// so that the callbackListener can use this callbackId
 				// when it receives an event from the unsubscribe operation
 				PluginResult result = new PluginResult(Status.NO_RESULT);
 				result.setKeepCallback(true);
-				return result;
+				
+				callbackContext.sendPluginResult(result);
+				return true;
 			}
 
 			if (action.equals(MqttServiceConstants.ACKNOWLEDGE_RECEIPT_ACTION)) {
@@ -569,44 +557,42 @@ public class MqttPlugin extends Plugin {
 					.equals(MqttServiceConstants.SET_ON_CONNECTIONLOST_CALLBACK)) {
 				return setCallback(clientHandle,
 						MqttServiceConstants.ON_CONNECTION_LOST_ACTION,
-						callbackId);
+						callbackContext);
 			}
 			if (action
 					.equals(MqttServiceConstants.SET_ON_MESSAGE_DELIVERED_CALLBACK)) {
 				return setCallback(clientHandle,
 						MqttServiceConstants.MESSAGE_DELIVERED_ACTION,
-						callbackId);
+						callbackContext);
 			}
 			if (action
 					.equals(MqttServiceConstants.SET_ON_MESSAGE_ARRIVED_CALLBACK)) {
-				PluginResult setCallbackResult = setCallback(clientHandle,
-						MqttServiceConstants.MESSAGE_ARRIVED_ACTION, callbackId);
+				boolean setCallbackResult = setCallback(clientHandle, MqttServiceConstants.MESSAGE_ARRIVED_ACTION, callbackContext);
 				return setCallbackResult;
 			}
 
 		} catch (JSONException e) {
-			return new PluginResult(Status.JSON_EXCEPTION, e.getMessage());
+			return false;
 		} catch (IllegalArgumentException e) {
-			return new PluginResult(Status.ERROR, e.getMessage());
+			return false;
 		}
 
-		return new PluginResult(Status.ERROR, "Unrecognised action '" + action
-				+ "'");
+		return false;
 	}
 
 	// Setup a mapping {clientHandle,action} -> callbackId
-	private PluginResult setCallback(String clientHandle, String action,
-			String callbackId) {
+	private boolean setCallback(String clientHandle, String action, CallbackContext callbackContext) {
 		Map<String /* action */, String /* callbackId */> clientCallbacks = callbackMap
 				.get(clientHandle);
 		if (clientCallbacks == null) {
-			return new PluginResult(Status.ERROR, "Invalid clientHandle {"
-					+ clientHandle + "}");
+			return false;
 		}
-		clientCallbacks.put(action, callbackId);
+		clientCallbacks.put(action, callbackContext.getCallbackId());
 		PluginResult result = new PluginResult(Status.NO_RESULT);
 		result.setKeepCallback(true); // keep it around
-		return result;
+		
+		callbackContext.sendPluginResult(result);
+		return true;
 	}
 
 	// get the callbackId for a specific {clientHandle,action} pair
@@ -620,7 +606,7 @@ public class MqttPlugin extends Plugin {
 	}
 
 	// Create a message from the JSONObject we've been passed
-	private MessagingMessage messageFromJSON(JSONObject jsMsg) {
+	private MessagingMessage messageFromJSON(JSONObject jsMsg, CallbackContext callbackContext) {
 		MessagingMessage result = null;
 		try {
 			// There seems no good way to turn a JSONArray (of number)
@@ -641,7 +627,7 @@ public class MqttPlugin extends Plugin {
 			result = new MessagingMessage(destination, payload, qos, retained,
 					duplicate);
 		} catch (JSONException e) {
-			traceException(TAG, "messageFromJSON", e);
+			traceException(TAG, "messageFromJSON", e, callbackContext);
 		}
 
 		return result;
@@ -649,22 +635,19 @@ public class MqttPlugin extends Plugin {
 
 	// Methods for tracing by making a callback to javascript
 
-	private void traceDebug(String tag, String message) {
-		makeTraceCallback(Status.OK, tag + " " + message, -1, "debug");
+	private void traceDebug(String tag, String message, CallbackContext callbackContext) {
+		makeTraceCallback(Status.OK, tag + " " + message, -1, "debug", callbackContext);
 	}
 
-	private void traceError(String tag, String message) {
-		makeTraceCallback(Status.ERROR, tag + " " + message, -1, "error");
+	private void traceError(String tag, String message, CallbackContext callbackContext) {
+		makeTraceCallback(Status.ERROR, tag + " " + message, -1, "error", callbackContext);
 	}
 
-	private void traceException(String tag, String message, Throwable tr) {
-		makeTraceCallback(Status.ERROR,
-				tag + " " + message + ":" + Log.getStackTraceString(tr), -1,
-				"error");
+	private void traceException(String tag, String message, Throwable tr, CallbackContext callbackContext) {
+		makeTraceCallback(Status.ERROR, tag + " " + message + ":" + Log.getStackTraceString(tr), -1, "error", callbackContext);
 	}
 
-	private void makeTraceCallback(Status status, String message,
-			int errorCode, String severity) {
+	private void makeTraceCallback(Status status, String message, int errorCode, String severity, CallbackContext callbackContext) {
 		if ((traceCallbackId != null) && (traceEnabled)) {
 			JSONObject callbackResult = new JSONObject();
 			try {
@@ -676,7 +659,8 @@ public class MqttPlugin extends Plugin {
 			}
 			PluginResult pluginResult = new PluginResult(status, callbackResult);
 			pluginResult.setKeepCallback(true);
-			success(pluginResult, traceCallbackId);
+			
+			callbackContext.success(traceCallbackId);
 		}
 	}
 
